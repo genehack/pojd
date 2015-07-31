@@ -1,0 +1,86 @@
+#! /usr/bin/env node
+
+"use strict";
+
+//= ## DISCLAIMER
+//
+// Quick and dirty proof of concept code!
+
+var esprima = require('esprima');
+var exec = require('child_process').exec;
+var fs = require('fs');
+var marked = require('marked-man');
+var temp = require('temp');
+var util = require('util');
+
+var filename = process.argv[2];
+var content = fs.readFileSync(filename, 'utf-8');
+if( content.match(/^\#\!/) ) {
+  // need to strip shebang line or esprima flips out
+  var lines = content.split("\n");
+  lines.splice(0,1);
+  content = lines.join("\n");
+}
+var ast = esprima.parse(content, { comment: true, loc: true});
+
+// start with a dummy node
+var previous_node = { loc: { start: {line: 0 }}};
+var markdown = "";
+var in_block = 0;
+
+ast.comments.forEach(function (node) {
+  // if the line starts with a '=', then we're starting a new pojd block
+  if (node.value.match(/^=/)) {
+    node.value = node.value.replace(/^=/, "");
+    in_block = 1;
+    if (markdown) { markdown += "\n"; }
+    markdown += node.value + "\n";
+    previous_node = node;
+  }
+  // otherwise , if we're in a block and this is one more than the previous line number, append
+  else if (in_block && node.loc.start.line === previous_node.loc.start.line + 1) {
+    markdown += node.value + "\n";
+    previous_node.loc.start.line++;
+  }
+  // otherwise, we're no longer in a block and we should skip
+  else {
+    in_block = 0;
+  }
+});
+
+var roff = marked(markdown);
+
+// Automatically track and cleanup files at exit
+temp.track();
+
+temp.open('pojd', function (err, info) {
+  if (err) { throw err; }
+  fs.write(info.fd, roff);
+  fs.close(info.fd, function (err) {
+    if (err) { throw err; }
+    exec("man " + info.path, function (err, stdout) {
+      if (err) { throw err; }
+      console.log(stdout.trim());
+    });
+  });
+});
+
+//=# POJD -- Plain Old Javascript Documentation
+//
+// ## SYNOPSIS
+//
+// ```
+// podj <javascript_file>
+// ```
+//
+// ## DESCRIPTION
+//
+// Allows you to write documentation in your JS code in the style of
+// Perl's Plain Old Documentation (POD) and then process it into a
+// manpage-like output on the fly.
+//
+// Unlike JSDoc, pojd re-parses the file every time, ensuring that the
+// output is always what is in the source.
+//
+// Unlike POD, pojd expects comments to be formatted in Markdown
+// because come the hell on, it's 2015. _*geez*_
